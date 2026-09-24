@@ -1,0 +1,40 @@
+services:
+  # ============================================================================
+  # RetailVision AI - Full-Stack Web Service (FastAPI + React UI + AI Pipeline)
+  # ============================================================================
+  - type: web
+    name: retailvision-ai
+    runtime: docker
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    plan: starter # Starter plan recommended for AI / OpenCV memory allocation
+    region: oregon # or frankfurt, singapore, ohio
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PROJECT_NAME
+        value: RetailVision AI
+      - key: DEBUG
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: BACKEND_CORS_ORIGINS
+        value: "*"
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "true"
+      - key: FRAME_SAMPLE_FPS
+        value: "5"
+      - key: YOLO_WEIGHTS_PATH
+        value: yolo11s.pt
+      - key: VIDEO_SWIN_WEIGHTS_PATH
+        value: /app/backend/ai/weights/video_swin_behaviour.pth
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false # Set in Render Dashboard if using Claude Insights
+    disk:
+      name: retailvision-media-storage
+      mountPath: /app/backend/data/media
+      sizeGB: 10

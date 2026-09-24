@@ -1,0 +1,49 @@
+# --- Environment ---
+.env
+.env.local
+*.local
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Node / Frontend ---
+node_modules/
+dist/
+.vite/
+frontend/.env
+
+# --- Database ---
+*.sqlite3
+pgdata/
+
+# --- AI model weights & large artifacts ---
+ai/weights/*.pt
+ai/weights/*.pth
+ai/weights/*.json
+!ai/weights/.gitkeep
+
+# --- Media (uploaded/processed videos, generated reports) ---
+data/media/
+backend/data/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs/
