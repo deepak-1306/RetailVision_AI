@@ -46,11 +46,11 @@ class Detection:
 def _adaptive_imgsz(frame_w: int, frame_h: int, device: str = "cpu") -> int:
     """
     Choose the YOLO inference resolution based on the source frame size and compute device.
-    For CPU inference, snaps to 640 for real-time speed (0.1s/frame vs 3s/frame).
+    For CPU inference, snaps to 480 for real-time speed and low RAM footprint.
     For CUDA/GPU inference, scales up to 960/1280 for distant shopper detection.
     """
     if device == "cpu":
-        return 768   # raised from 640: yolo11s handles 768 well on CPU
+        return 480
     long_side = max(frame_w, frame_h)
     if long_side >= 3000:       # 4K / UHD
         return 1280
@@ -59,7 +59,7 @@ def _adaptive_imgsz(frame_w: int, frame_h: int, device: str = "cpu") -> int:
     elif long_side >= 1280:     # HD
         return 768
     else:                       # SD / 480p
-        return 640
+        return 480
 
 
 class YoloDetector:

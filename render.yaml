@@ -25,7 +25,7 @@ services:
       - key: CELERY_TASK_ALWAYS_EAGER
         value: "true"
       - key: FRAME_SAMPLE_FPS
-        value: "5"
+        value: "3"
       - key: YOLO_WEIGHTS_PATH
         value: yolo11s.pt
       - key: VIDEO_SWIN_WEIGHTS_PATH

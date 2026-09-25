@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     VIDEO_SWIN_CLIP_LEN: int = 32
     VIDEO_SWIN_FRAME_STRIDE: int = 2
     VIDEO_SWIN_WEIGHTS_PATH: str = "./ai/weights/video_swin_behaviour.pth"
-    FRAME_SAMPLE_FPS: int = 5  # Raised from 3: richer temporal features for classifier
+    FRAME_SAMPLE_FPS: int = 3  # Optimal balance: fast cloud inference with high behavioural precision
     DEVICE: str = "cpu"  # cuda | cpu
 
     # ---------- Live streaming (webcam / RTSP -> WebSocket) ----------
