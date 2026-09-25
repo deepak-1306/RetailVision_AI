@@ -62,11 +62,11 @@ ENV PYTHONPATH=/app/backend:/app \
     FRAME_SAMPLE_FPS=5 \
     YOLO_WEIGHTS_PATH=yolo11s.pt \
     VIDEO_SWIN_WEIGHTS_PATH=/app/backend/ai/weights/video_swin_behaviour.pth \
-    PORT=8000
+    PORT=10000
 
 WORKDIR /app/backend
 
-EXPOSE 8000
+EXPOSE 10000
 
-# Start Uvicorn dynamically binding to the port assigned by Render ($PORT) or 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start Uvicorn binding to 0.0.0.0 and listening on Render's PORT (defaults to 10000)
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
