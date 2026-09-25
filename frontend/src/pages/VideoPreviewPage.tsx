@@ -239,8 +239,7 @@ export default function VideoPreviewPage() {
                             <p className="text-sm font-semibold text-rose-400">Video failed to load in browser</p>
                             <p className="text-xs mt-1 text-slate-400">{videoError}</p>
                             <p className="text-xs mt-2 text-slate-500">
-                              The annotated video uses MPEG-4 encoding. Try downloading it to play locally,
-                              or re-upload the video to regenerate with H.264.
+                              Please verify your network connection or click Retry. You can also download the annotated video below.
                             </p>
                           </div>
                           <div className="flex gap-3 flex-wrap justify-center">
