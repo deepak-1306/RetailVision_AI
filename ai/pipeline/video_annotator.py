@@ -14,6 +14,7 @@ Robust design:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
@@ -28,6 +29,21 @@ ProgressCallback = Optional[Callable[[str, int], None]]
 
 _MAX_OUTPUT_WIDTH  = 1280
 _MAX_OUTPUT_HEIGHT = 720
+
+
+def _get_ffmpeg_exe() -> str:
+    """Finds the best available FFmpeg binary (imageio-ffmpeg or system)."""
+    try:
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            return exe
+    except Exception:
+        pass
+    which = shutil.which("ffmpeg")
+    if which:
+        return which
+    return "ffmpeg"
+
 
 _PALETTE = [
     (255, 56, 56),   (255, 157, 151), (255, 112, 31),  (255, 178, 29),
@@ -223,11 +239,12 @@ def generate_annotated_video(
     scale_y = out_h / src_h
     do_resize = (out_w != src_w or out_h != src_h)
 
-    Path(output_video_path).parent.mkdir(parents=True, exist_ok=True)
+    out_file = Path(output_video_path).resolve()
+    out_file.parent.mkdir(parents=True, exist_ok=True)
     track_state = _build_track_state(segments, predictions)
     lookahead = 1.5  # wider window ensures bboxes still show when frame rate doesn't align with segment timestamps
 
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    ffmpeg_exe = _get_ffmpeg_exe()
     cmd = [
         ffmpeg_exe,
         "-y",
@@ -239,66 +256,131 @@ def generate_annotated_video(
         "-i", "-",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "ultrafast",
-        "-crf", "24",
+        "-profile:v", "main",
+        "-level", "3.1",
+        "-preset", "fast",
+        "-crf", "23",
         "-movflags", "+faststart",
-        str(output_video_path),
+        str(out_file),
     ]
 
-    # CRITICAL: stdout and stderr MUST be DEVNULL to prevent OS pipe buffer deadlocks!
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    
+    direct_pipe_failed = False
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        direct_pipe_failed = True
+
     report_every = max(total_frames // 20, 1)
     frame_number = 0
     written_frames = 0
 
-    try:
-        while True:
-            if frame_number % frame_step == 0:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+    if not direct_pipe_failed and proc and proc.stdin:
+        try:
+            while True:
+                if frame_number % frame_step == 0:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                if do_resize:
-                    frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+                    if do_resize:
+                        frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
 
-                timestamp = frame_number / src_fps
-                active = _active_tracks_at(track_state, timestamp, lookahead)
-                annotated = _annotate_frame(frame, timestamp, active, frame_number, total_frames, scale_x, scale_y)
+                    timestamp = frame_number / src_fps
+                    active = _active_tracks_at(track_state, timestamp, lookahead)
+                    annotated = _annotate_frame(frame, timestamp, active, frame_number, total_frames, scale_x, scale_y)
 
-                if proc.stdin:
-                    proc.stdin.write(annotated.tobytes())
-                written_frames += 1
-            else:
-                # Fast grab without full image decoding for skipped frames
-                if not cap.grab():
-                    break
+                    try:
+                        proc.stdin.write(annotated.tobytes())
+                        written_frames += 1
+                    except (BrokenPipeError, OSError):
+                        direct_pipe_failed = True
+                        break
+                else:
+                    if not cap.grab():
+                        break
 
-            frame_number += 1
-            if frame_number % report_every == 0:
-                pct = int(100 * frame_number / max(total_frames, 1))
-                _cb("annotating_video", min(pct, 95))
+                frame_number += 1
+                if frame_number % report_every == 0:
+                    pct = int(100 * frame_number / max(total_frames, 1))
+                    _cb("annotating_video", min(pct, 90))
 
-    finally:
-        cap.release()
-        if proc.stdin:
-            try:
-                proc.stdin.close()
-            except Exception:
-                pass
-        proc.wait(timeout=30)
+        finally:
+            cap.release()
+            if proc and proc.stdin:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            if proc:
+                try:
+                    proc.wait(timeout=30)
+                    if proc.returncode != 0:
+                        direct_pipe_failed = True
+                except Exception:
+                    direct_pipe_failed = True
+
+    # ── Fallback Path: If direct pipe failed or output is missing/empty ──────
+    if direct_pipe_failed or not out_file.exists() or out_file.stat().st_size < 500:
+        _cb("annotating_video", 50)
+        temp_intermediate = out_file.with_suffix(".temp.mp4")
+        cap = cv2.VideoCapture(str(input_video_path))
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(temp_intermediate), fourcc, effective_fps, (out_w, out_h))
+        frame_number = 0
+        try:
+            while True:
+                if frame_number % frame_step == 0:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    if do_resize:
+                        frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+                    timestamp = frame_number / src_fps
+                    active = _active_tracks_at(track_state, timestamp, lookahead)
+                    annotated = _annotate_frame(frame, timestamp, active, frame_number, total_frames, scale_x, scale_y)
+                    writer.write(annotated)
+                else:
+                    if not cap.grab():
+                        break
+                frame_number += 1
+        finally:
+            cap.release()
+            writer.release()
+
+        # Transcode intermediate video using FFmpeg into H.264/yuv420p/+faststart
+        _cb("annotating_video", 85)
+        transcode_cmd = [
+            ffmpeg_exe, "-y",
+            "-i", str(temp_intermediate),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "main",
+            "-level", "3.1",
+            "-preset", "fast",
+            "-crf", "23",
+            "-movflags", "+faststart",
+            str(out_file),
+        ]
+        try:
+            subprocess.run(transcode_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        finally:
+            if temp_intermediate.exists():
+                try:
+                    temp_intermediate.unlink()
+                except Exception:
+                    pass
 
     _cb("annotating_video", 95)
 
-    out_path = Path(output_video_path)
-    if not out_path.exists() or out_path.stat().st_size < 500:
-        raise RuntimeError(f"FFmpeg encoding produced an invalid or empty file: {output_video_path}")
+    if not out_file.exists() or out_file.stat().st_size < 500:
+        raise RuntimeError(f"Video annotation produced an invalid or empty file: {output_video_path}")
 
     _cb("annotating_video", 100)
-    return str(output_video_path)
+    return str(out_file)
 
