@@ -65,6 +65,16 @@ def _report(cb: ProgressCallback, status: str, progress: int) -> None:
 
 
 def run_pipeline(video_path: str, config: PipelineConfig, progress_cb: ProgressCallback = None) -> PipelineResult:
+    # Optimize CPU threads for cloud deployment (prevents context-switch thrashing on 0.5-1 vCPU)
+    if config.device == "cpu":
+        try:
+            import torch
+            import cv2
+            torch.set_num_threads(2)
+            cv2.setNumThreads(2)
+        except Exception:
+            pass
+
     # ---- Stage 1: preprocessing ----
     _report(progress_cb, "preprocessing", 5)
     preprocessor = VideoPreprocessor(video_path, sample_fps=config.frame_sample_fps)
