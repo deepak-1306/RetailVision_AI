@@ -80,50 +80,84 @@ class YoloDetector:
 
     def _load_model(self):
         if self._model is None:
+            import torch
+            torch.set_grad_enabled(False)
             from ultralytics import YOLO  # imported lazily: heavy dependency
-            self._model = YOLO(self.weights_path)
+            m = YOLO(self.weights_path)
+            try:
+                m.fuse()
+            except Exception:
+                pass
+            self._model = m
         return self._model
 
     def detect(self, frame: np.ndarray) -> List[Detection]:
         """Run inference on a single BGR frame, returning 'person' detections."""
+        import cv2
+        import torch
+
         model = self._load_model()
 
         h, w = frame.shape[:2]
         imgsz = _adaptive_imgsz(w, h, self.device)
 
-        results = model.predict(
-            source=frame,
-            conf=self.confidence_threshold,
-            iou=self.iou_threshold,
-            classes=[_COCO_PERSON_CLASS_ID],
-            device=self.device,
-            imgsz=imgsz,
-            agnostic_nms=True,   # class-agnostic NMS helps with overlapping people
-            verbose=False,
-        )
+        # Pre-downscale large frames to inference size to prevent large tensor allocations
+        long_side = max(w, h)
+        if long_side > imgsz:
+            scale = imgsz / float(long_side)
+            target_w = max(int(round(w * scale)), 1)
+            target_h = max(int(round(h * scale)), 1)
+            inference_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            scale_x = w / float(target_w)
+            scale_y = h / float(target_h)
+        else:
+            inference_frame = frame
+            scale_x = 1.0
+            scale_y = 1.0
+
+        with torch.no_grad():
+            results = model.predict(
+                source=inference_frame,
+                conf=self.confidence_threshold,
+                iou=self.iou_threshold,
+                classes=[_COCO_PERSON_CLASS_ID],
+                device=self.device,
+                imgsz=imgsz,
+                agnostic_nms=True,   # class-agnostic NMS helps with overlapping people
+                verbose=False,
+            )
 
         detections: List[Detection] = []
         if not results:
             return detections
 
         boxes = results[0].boxes
-        if boxes is None:
-            return detections
+        if boxes is not None:
+            frame_area = h * w
+            for box in boxes:
+                xyxy = box.xyxy[0].tolist()
+                conf = float(box.conf[0])
 
-        frame_area = h * w
-        for box in boxes:
-            xyxy = box.xyxy[0].tolist()
-            conf = float(box.conf[0])
-            bw   = xyxy[2] - xyxy[0]
-            bh   = xyxy[3] - xyxy[1]
-            # Reject detections smaller than 0.2% of frame area (noise)
-            if bw * bh < frame_area * 0.002:
-                continue
-            # Reject non-person shapes (too wide or too short relative to height)
-            ar = bw / max(bh, 1.0)
-            if ar > 1.8:   # wider than tall: likely misfire
-                continue
-            detections.append(
-                Detection(x1=xyxy[0], y1=xyxy[1], x2=xyxy[2], y2=xyxy[3], confidence=conf)
-            )
+                # Scale coordinates back to original frame dimensions
+                orig_x1 = xyxy[0] * scale_x
+                orig_y1 = xyxy[1] * scale_y
+                orig_x2 = xyxy[2] * scale_x
+                orig_y2 = xyxy[3] * scale_y
+
+                bw = orig_x2 - orig_x1
+                bh = orig_y2 - orig_y1
+
+                # Reject detections smaller than 0.2% of frame area (noise)
+                if bw * bh < frame_area * 0.002:
+                    continue
+                # Reject non-person shapes (too wide or too short relative to height)
+                ar = bw / max(bh, 1.0)
+                if ar > 1.8:   # wider than tall: likely misfire
+                    continue
+                detections.append(
+                    Detection(x1=orig_x1, y1=orig_y1, x2=orig_x2, y2=orig_y2, confidence=conf)
+                )
+
+        del results
         return detections
+

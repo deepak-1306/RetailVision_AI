@@ -14,6 +14,16 @@ calls `run_pipeline()` and persists the result to the database.
 """
 from __future__ import annotations
 
+import os
+# Configure CPU thread limits and memory allocations before heavy imports
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["ULTRALYTICS_AUTOINSTALL"] = "0"
+
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -64,6 +74,17 @@ def _report(cb: ProgressCallback, status: str, progress: int) -> None:
         cb(status, progress)
 
 
+def _free_memory() -> None:
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def run_pipeline(video_path: str, config: PipelineConfig, progress_cb: ProgressCallback = None) -> PipelineResult:
     # Optimize CPU threads for cloud deployment (prevents context-switch thrashing on 0.5-1 vCPU)
     if config.device == "cpu":
@@ -80,7 +101,7 @@ def run_pipeline(video_path: str, config: PipelineConfig, progress_cb: ProgressC
     preprocessor = VideoPreprocessor(video_path, sample_fps=config.frame_sample_fps)
     metadata = preprocessor.get_metadata()
 
-    # ---- Stage 2 & 3: detection + tracking (run together, frame by frame) ----
+    # ---- Stage 2: detection + tracking ----
     _report(progress_cb, "detecting", 15)
     detector = YoloDetector(
         weights_path=config.yolo_weights_path,
@@ -93,15 +114,9 @@ def run_pipeline(video_path: str, config: PipelineConfig, progress_cb: ProgressC
         match_thresh=config.bytetrack_match_thresh,
         track_buffer=config.bytetrack_track_buffer,
     )
-    classifier = VideoSwinBehaviourClassifier(
-        weights_path=config.video_swin_weights_path,
-        clip_len=config.video_swin_clip_len,
-        frame_stride=config.video_swin_frame_stride,
-        device=config.device,
-    )
 
     _report(progress_cb, "tracking", 30)
-    raw_segments = []
+    all_observations: list[TrackObservation] = []
     total_expected_frames = max(int(metadata.duration_seconds * config.frame_sample_fps), 1)
 
     for i, sampled_frame in enumerate(preprocessor.iter_sampled_frames()):
@@ -109,20 +124,49 @@ def run_pipeline(video_path: str, config: PipelineConfig, progress_cb: ProgressC
         tracks = tracker.update(detections)
 
         for track in tracks:
-            obs = TrackObservation(
+            all_observations.append(TrackObservation(
                 track_id=track.track_id,
                 timestamp=sampled_frame.timestamp,
                 bbox=track.bbox,
                 frame_width=metadata.width,
                 frame_height=metadata.height,
-            )
-            segment = classifier.observe(obs)
-            if segment is not None:
-                raw_segments.append(segment)
+            ))
 
         if i % max(total_expected_frames // 10, 1) == 0:
-            pct = 30 + int(40 * min(i / total_expected_frames, 1.0))
+            pct = 15 + int(35 * min(i / total_expected_frames, 1.0))
+            _report(progress_cb, "tracking", min(pct, 50))
+
+    # Stage 2 Cleanup: Release YOLO detector and tracker completely from RAM before Stage 3
+    if hasattr(detector, "_model"):
+        del detector._model
+    del detector
+    del tracker
+    _free_memory()
+
+    # ---- Stage 3: behaviour classification ----
+    _report(progress_cb, "classifying_behaviour", 50)
+    classifier = VideoSwinBehaviourClassifier(
+        weights_path=config.video_swin_weights_path,
+        clip_len=config.video_swin_clip_len,
+        frame_stride=config.video_swin_frame_stride,
+        device=config.device,
+    )
+
+    raw_segments = []
+    total_obs = max(len(all_observations), 1)
+    for idx, obs in enumerate(all_observations):
+        segment = classifier.observe(obs)
+        if segment is not None:
+            raw_segments.append(segment)
+        if idx % max(total_obs // 10, 1) == 0:
+            pct = 50 + int(20 * min(idx / total_obs, 1.0))
             _report(progress_cb, "classifying_behaviour", min(pct, 70))
+
+    # Stage 3 Cleanup: Release VideoSwin classifier completely from RAM
+    if hasattr(classifier, "_model"):
+        del classifier._model
+    del classifier
+    _free_memory()
 
     # ---- Track Stitching: Merge fragmented tracks of the same customer ----
     raw_segments = _stitch_tracks(raw_segments, max_time_gap=15.0)
