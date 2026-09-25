@@ -26,6 +26,7 @@ opencv-python-headless==4.10.0.84
 ultralytics==8.3.0
 numpy==1.26.4
 Pillow==10.4.0
+imageio-ffmpeg==0.6.0
 
 # ---------- Behaviour recognition / deep learning ----------
 torch==2.4.1

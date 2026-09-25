@@ -46,6 +46,11 @@ app.add_middleware(
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -65,7 +70,7 @@ if frontend_dist.exists() and (frontend_dist / "index.html").exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
-        if full_path.startswith("api/") or full_path in ("docs", "redoc", "openapi.json", "health"):
+        if full_path.startswith("api/") or full_path in ("docs", "redoc", "openapi.json"):
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Not Found")
         target_file = frontend_dist / full_path
@@ -76,8 +81,3 @@ else:
     @app.get("/")
     def root() -> dict:
         return {"project": settings.PROJECT_NAME, "status": "running", "docs": "/docs"}
-
-
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
