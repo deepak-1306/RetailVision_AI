@@ -167,6 +167,8 @@ def _build_behaviour_map(db: Session, video_id: str, timestamp: float) -> dict[i
     return mapping
 
 
+from app.core.storage import resolve_media_path
+
 # ── endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/{video_id}/frame-count")
@@ -176,8 +178,14 @@ def get_frame_count(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     video = _get_owned_video(db, video_id, current_user)
+    resolved_path = resolve_media_path(video.storage_path, settings.UPLOAD_DIR)
+    if not resolved_path or not resolved_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source video file not found on server storage. Please upload the video again.",
+        )
     try:
-        session = _get_session(video_id, video.storage_path)
+        session = _get_session(video_id, str(resolved_path))
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"count": session.total_frames, "fps": session.fps, "video_id": video_id}
@@ -191,8 +199,14 @@ def get_frame(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     video = _get_owned_video(db, video_id, current_user)
+    resolved_path = resolve_media_path(video.storage_path, settings.UPLOAD_DIR)
+    if not resolved_path or not resolved_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source video file not found on server storage.",
+        )
     try:
-        session = _get_session(video_id, video.storage_path)
+        session = _get_session(video_id, str(resolved_path))
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

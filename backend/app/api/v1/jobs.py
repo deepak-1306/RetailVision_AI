@@ -60,6 +60,9 @@ def _iter_file(path: str, start: int, end: int, chunk: int = 1024 * 256):
             yield data
 
 
+from app.core.config import settings
+from app.core.storage import resolve_media_path
+
 @router.get("/{job_id}/annotated-video")
 def get_annotated_video(
     job_id: str,
@@ -83,11 +86,11 @@ def get_annotated_video(
             detail="Annotated video not yet available. Check job status.",
         )
 
-    path = Path(job.annotated_video_path)
-    if not path.exists() or path.stat().st_size == 0:
+    path = resolve_media_path(job.annotated_video_path, settings.PROCESSED_DIR)
+    if not path or not path.exists() or path.stat().st_size == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Annotated video file missing: {job.annotated_video_path}",
+            detail="Annotated video file not found on server storage.",
         )
 
     file_size = path.stat().st_size
@@ -145,8 +148,8 @@ def download_annotated_video(
     job = _get_owned_job(db, job_id, current_user)
     if not job.annotated_video_path:
         raise HTTPException(status_code=404, detail="Annotated video not available")
-    path = Path(job.annotated_video_path)
-    if not path.exists():
+    path = resolve_media_path(job.annotated_video_path, settings.PROCESSED_DIR)
+    if not path or not path.exists():
         raise HTTPException(status_code=404, detail="File not found on server")
     return FileResponse(
         str(path),

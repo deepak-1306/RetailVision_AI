@@ -31,3 +31,24 @@ def init_db() -> None:
     )
 
     Base.metadata.create_all(bind=engine)
+
+    # Ensure demo accounts exist out-of-the-box
+    from app.core.security import hash_password
+    from app.models.user import User
+
+    with SessionLocal() as db:
+        demo_accounts = [
+            ("deepak@store.com", "admin123", "Deepak", "Flagship Store"),
+            ("admin@retailvision.ai", "admin123", "Admin", "RetailVision HQ"),
+            ("test@demo.com", "demo123", "Test User", "Demo Supermarket"),
+        ]
+        for email, pwd, name, store in demo_accounts:
+            existing = db.query(User).filter(User.email == email).first()
+            if not existing:
+                db.add(User(
+                    email=email,
+                    hashed_password=hash_password(pwd),
+                    full_name=name,
+                    store_name=store,
+                ))
+        db.commit()

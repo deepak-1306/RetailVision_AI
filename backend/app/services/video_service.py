@@ -36,7 +36,7 @@ def save_upload(db: Session, owner_id: str, file: UploadFile) -> tuple[Video, Pr
     video = Video(
         owner_id=owner_id,
         filename=stored_name,
-        storage_path=str(dest_path),
+        storage_path=dest_path.as_posix(),
         original_name=file.filename or stored_name,
         duration_seconds=duration,
         fps=fps,

@@ -49,6 +49,8 @@ from ai.pipeline.run_pipeline import PipelineConfig, run_pipeline
 from ai.pipeline.video_annotator import generate_annotated_video
 
 
+from app.core.storage import resolve_media_path
+
 def _execute(job_id: str, db) -> str:
     """
     Core pipeline execution shared by the BackgroundTask runner and the
@@ -61,6 +63,14 @@ def _execute(job_id: str, db) -> str:
     if video is None:
         update_job_status(db, job_id, JobStatus.FAILED.value, 0, "Video not found")
         return "video not found"
+
+    # Cross-platform resolution of video input path
+    resolved_video_path = resolve_media_path(video.storage_path, settings.UPLOAD_DIR)
+    if not resolved_video_path or not resolved_video_path.exists():
+        update_job_status(db, job_id, JobStatus.FAILED.value, 0, f"Video file missing on server: {video.storage_path}")
+        return "video file not found"
+
+    input_video_str = str(resolved_video_path)
 
     def on_progress(status: str, progress: int) -> None:
         update_job_status(db, job_id, status, progress)
@@ -80,7 +90,7 @@ def _execute(job_id: str, db) -> str:
         xgboost_model_path=settings.XGBOOST_MODEL_PATH,
     )
 
-    result = run_pipeline(video.storage_path, config, progress_cb=on_progress)
+    result = run_pipeline(input_video_str, config, progress_cb=on_progress)
 
     # ---- Persist behaviour events ----
     for seg in result.behaviour_segments:
@@ -127,12 +137,10 @@ def _execute(job_id: str, db) -> str:
 
     # ---- Generate annotated MP4 ----
     update_job_status(db, job_id, "annotating_video", 72)
-    annotated_path = str(
-        Path(settings.PROCESSED_DIR) / f"{job_id}_annotated.mp4"
-    )
+    annotated_path = (Path(settings.PROCESSED_DIR) / f"{job_id}_annotated.mp4").as_posix()
     try:
         generate_annotated_video(
-            input_video_path=video.storage_path,
+            input_video_path=input_video_str,
             output_video_path=annotated_path,
             segments=getattr(result, "raw_segments", result.behaviour_segments),
             predictions=result.predictions,
