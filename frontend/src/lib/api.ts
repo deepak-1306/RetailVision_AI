@@ -15,12 +15,16 @@ import type {
   Video,
 } from "@/types";
 
-const envBase = import.meta.env.VITE_API_BASE_URL;
-const API_BASE_URL = envBase && envBase.trim().length > 0 
-  ? envBase 
+const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
+const rawBase = (envUrl && envUrl.trim().length > 0)
+  ? envUrl.trim()
   : (typeof window !== "undefined" && window.location.origin && !window.location.origin.includes(":5173")
-      ? `${window.location.origin}/api/v1`
-      : "http://localhost:8000/api/v1");
+      ? window.location.origin
+      : "http://localhost:8000");
+
+// Normalize: remove trailing slash and ensure /api/v1 prefix is present
+const cleanBase = rawBase.replace(/\/+$/, "");
+export const API_BASE_URL = cleanBase.endsWith("/api/v1") ? cleanBase : `${cleanBase}/api/v1`;
 
 export const api = axios.create({ baseURL: API_BASE_URL });
 
